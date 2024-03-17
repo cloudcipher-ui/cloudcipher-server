@@ -50,7 +50,7 @@ public class AuthenticationService {
         return CCUser;
     }
 
-    public boolean isNotAuthorized(String token, String expectedUsername) {
+    public boolean isNotAuthorized(String expectedUsername, String token) {
         CCUser CCUser = CCUserRepository.findByUsername(expectedUsername);
         if (CCUser == null || token == null) {
             return true;
