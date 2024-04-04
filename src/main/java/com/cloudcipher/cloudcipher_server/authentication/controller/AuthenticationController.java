@@ -3,11 +3,13 @@ package com.cloudcipher.cloudcipher_server.authentication.controller;
 import com.cloudcipher.cloudcipher_server.authentication.model.CCUser;
 import com.cloudcipher.cloudcipher_server.authentication.service.AuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -25,7 +27,7 @@ public class AuthenticationController {
             response.put("token", user.getToken());
             response.put("username", user.getUsername());
         } catch (BadCredentialsException e) {
-            response.put("error", "Invalid username or password");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
         return response;
     }
@@ -37,7 +39,7 @@ public class AuthenticationController {
             authenticationService.register(username, password);
             response.put("success", "Account created successfully");
         } catch (BadCredentialsException e) {
-            response.put("error", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
         return response;
     }
