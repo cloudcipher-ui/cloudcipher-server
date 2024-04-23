@@ -87,7 +87,7 @@ public class FileService {
         }
     }
 
-    public void upload(String username, String token, MultipartFile file) throws BadRequestException {
+    public void upload(String username, String token, MultipartFile file, MultipartFile iv) throws BadRequestException {
         if (authenticationService.isNotAuthorized(username, token)) {
             throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
         }
@@ -97,6 +97,11 @@ public class FileService {
             String key = username + "/" + file.getOriginalFilename();
             String noWhiteSpaceKey = key.replaceAll("\\s", "_");
             uploadToS3(noWhiteSpaceKey, fileBytes);
+
+            byte[] ivBytes = iv.getBytes();
+            String ivKey = username + "/iv/" + file.getOriginalFilename();
+            String noWhiteSpaceIvKey = ivKey.replaceAll("\\s", "_");
+            uploadToS3(noWhiteSpaceIvKey, ivBytes);
         } catch (Exception e) {
             throw new BadRequestException("Error uploading file.");
         }
@@ -118,6 +123,9 @@ public class FileService {
 
         String key = username + "/" + filename;
         deleteFromS3(key);
+
+        String ivKey = username + "/iv/" + filename;
+        deleteFromS3(ivKey);
     }
 
     public void reEncrypt(String username, String targetUsername, String token, String filename, MultipartFile iv, MultipartFile rg) throws IOException {

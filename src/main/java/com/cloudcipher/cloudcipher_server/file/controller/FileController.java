@@ -25,9 +25,9 @@ public class FileController {
 
 
     @PostMapping("/upload")
-    public @ResponseBody String upload(@RequestParam String username, @RequestParam String token, @RequestParam MultipartFile file) {
+    public @ResponseBody String upload(@RequestParam String username, @RequestParam String token, @RequestParam MultipartFile file, @RequestParam MultipartFile iv) {
         try {
-            fileService.upload(username, token, file);
+            fileService.upload(username, token, file, iv);
             return "File uploaded successfully";
         } catch (BadCredentialsException | BadRequestException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
