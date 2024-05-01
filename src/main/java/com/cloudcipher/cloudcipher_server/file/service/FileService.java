@@ -2,18 +2,16 @@ package com.cloudcipher.cloudcipher_server.file.service;
 
 import com.cloudcipher.cloudcipher_server.authentication.service.AuthenticationService;
 import org.apache.coyote.BadRequestException;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -21,7 +19,6 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
 import java.io.IOException;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -58,7 +55,13 @@ public class FileService {
 
     private void uploadToS3(String key, byte[] fileBytes) throws BadRequestException {
         try {
-            s3Client.putObject(builder -> builder.bucket(bucketName).key(key).build(), RequestBody.fromBytes(fileBytes));
+            s3Client.putObject(
+                    PutObjectRequest.builder()
+                            .bucket(bucketName)
+                            .key(key)
+                            .build(),
+                    RequestBody.fromBytes(fileBytes)
+            );
         } catch (S3Exception e) {
             throw new BadRequestException("Error uploading file to S3.");
         }
@@ -128,9 +131,13 @@ public class FileService {
         deleteFromS3(ivKey);
     }
 
-    public void reEncrypt(String username, String targetUsername, String token, String filename, MultipartFile iv, MultipartFile rg) throws IOException {
+    public void reEncrypt(String username, String targetUsername, String token, String filename, MultipartFile rg) throws IOException {
         if (authenticationService.isNotAuthorized(username, token)) {
             throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
+        }
+
+        if (!authenticationService.userExists(targetUsername)) {
+            throw new BadRequestException("Target user does not exist.");
         }
 
         String key = username + "/" + filename;
@@ -138,47 +145,35 @@ public class FileService {
             throw new BadRequestException("File not found.");
         }
         byte[] fileBytes = downloadFromS3(key);
+        byte[] iv = downloadFromS3(username + "/iv/" + filename);
 
-        ByteArrayResource fileStream = new ByteArrayResource(fileBytes) {
-            @Override
-            public String getFilename() {
-                return filename;
+        HttpPost post = new HttpPost(proxyUrl);
+        HttpEntity entity = MultipartEntityBuilder.create()
+                .addBinaryBody("file", fileBytes, org.apache.http.entity.ContentType.DEFAULT_BINARY, filename)
+                .addBinaryBody("iv", iv, org.apache.http.entity.ContentType.DEFAULT_BINARY, "iv")
+                .addBinaryBody("rg", rg.getBytes(), org.apache.http.entity.ContentType.DEFAULT_BINARY, "rg")
+                .addTextBody("key", secretKey)
+                .build();
+
+        post.setEntity(entity);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            HttpResponse response = client.execute(post);
+            HttpEntity responseEntity = response.getEntity();
+
+            if (response.getStatusLine().getStatusCode() != 200) {
+                throw new BadRequestException("Error re-encrypting file.");
             }
-        };
-        ByteArrayResource ivStream = new ByteArrayResource(iv.getBytes()) {
-            @Override
-            public String getFilename() {
-                return "iv";
+
+            if (responseEntity == null) {
+                throw new RuntimeException("Internal server error. Please try again later or contact support");
             }
-        };
-        ByteArrayResource rgStream = new ByteArrayResource(rg.getBytes()) {
-            @Override
-            public String getFilename() {
-                return "rg";
-            }
-        };
 
-        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-        body.add("file", fileStream);
-        body.add("iv", ivStream);
-        body.add("rg", rgStream);
-        body.add("key", secretKey);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-        HttpEntity<MultiValueMap<String, Object>> request = new HttpEntity<>(body, headers);
-
-        URI uri = URI.create(proxyUrl);
-        RestTemplate restTemplate = new RestTemplate();
-        ResponseEntity<byte[]> response = restTemplate.postForEntity(uri, request, byte[].class);
-
-        byte[] responseBody = response.getBody();
-        if (responseBody == null) {
-            throw new BadRequestException("Error re-encrypting file.");
+            byte[] newFile = responseEntity.getContent().readAllBytes();
+            uploadToS3(targetUsername + "/shared/" + username + "/" + filename, newFile);
+            uploadToS3(targetUsername + "/shared/" + username + "/iv/" + filename, iv);
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage());
         }
-
-        String targetKey = targetUsername + "/shared/" + username + "/" + filename;
-        uploadToS3(targetKey, responseBody);
     }
 
     public List<Map<String, String>> list(String username, String token) {
@@ -188,18 +183,31 @@ public class FileService {
 
         List<Map<String, String>> files = new ArrayList<>();
         String prefix = username + "/";
-        ListObjectsResponse response = s3Client.listObjects(
-                ListObjectsRequest.builder().bucket(bucketName).prefix(prefix).build()
-        );
 
-        response.contents().forEach(object -> {
-            String key = object.key();
-            files.add(Map.of(
-                    "filename", key.substring(prefix.length()),
-                    "size", String.valueOf(object.size())
-            ));
-        });
+        ListObjectsV2Request listObjectsV2Request = ListObjectsV2Request.builder().bucket(bucketName).prefix(prefix).build();
+        ListObjectsV2Response listObjectsV2Response = s3Client.listObjectsV2(listObjectsV2Request);
+        for (S3Object s3Object : listObjectsV2Response.contents()) {
+            String key = s3Object.key();
+            if (key.contains("/iv/")) {
+                continue;
+            }
+            String fileName = key.substring(prefix.length());
+            long size = s3Object.size();
+            files.add(Map.of("filename", fileName, "size", String.valueOf(size)));
+        }
 
         return files;
+    }
+
+    public void newKey(String username, String token, String targetUsername, String filename, MultipartFile newKey) throws IOException {
+        if (authenticationService.isNotAuthorized(username, token)) {
+            throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
+        }
+
+        if (!authenticationService.userExists(targetUsername)) {
+            throw new BadRequestException("Target user does not exist.");
+        }
+
+        uploadToS3(targetUsername + "/shared/" + username + "/key/" + filename + ".key", newKey.getBytes());
     }
 }

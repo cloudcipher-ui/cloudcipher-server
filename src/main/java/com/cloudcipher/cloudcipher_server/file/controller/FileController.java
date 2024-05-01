@@ -57,11 +57,17 @@ public class FileController {
     }
 
     @PostMapping("/reencrypt")
-    public @ResponseBody String reEncrypt(@RequestParam String username, @RequestParam String targetUsername, @RequestParam String token, @RequestParam String filename, @RequestParam MultipartFile iv, @RequestParam MultipartFile rg) {
+    public @ResponseBody String reEncrypt(
+            @RequestParam String username,
+            @RequestParam String targetUsername,
+            @RequestParam String token,
+            @RequestParam String filename,
+            @RequestParam MultipartFile rg
+    ) {
         try {
-            fileService.reEncrypt(username, targetUsername, token, filename, iv, rg);
+            fileService.reEncrypt(username, targetUsername, token, filename, rg);
             return "File re-encrypted successfully";
-        } catch (BadCredentialsException | IOException e) {
+        } catch (IOException | RuntimeException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }
@@ -71,6 +77,16 @@ public class FileController {
         try {
             return fileService.list(username, token);
         } catch (BadCredentialsException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    @PostMapping("/newkey")
+    public @ResponseBody String newKey(@RequestParam String username, @RequestParam String token, @RequestParam String targetUsername, @RequestParam String filename, @RequestParam MultipartFile newKey) {
+        try {
+            fileService.newKey(username, token, targetUsername, filename, newKey);
+            return "New key sent successfully";
+        } catch (BadCredentialsException | IOException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }
