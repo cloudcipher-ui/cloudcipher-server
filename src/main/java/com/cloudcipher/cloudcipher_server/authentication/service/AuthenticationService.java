@@ -33,30 +33,36 @@ public class AuthenticationService {
         CCUserRepository.save(user);
     }
 
-    public CCUser login(String username, String password) {
-        CCUser CCUser = CCUserRepository.findByUsername(username);
-        if (CCUser == null || !passwordEncoder.matches(password, CCUser.getHashedPassword())) {
+    @Transactional
+    public void addPublicKey(String username, String password, byte[] publicKey) {
+        CCUser user = CCUserRepository.findByUsername(username);
+        if (user == null || !passwordEncoder.matches(password, user.getHashedPassword())) {
             throw new BadCredentialsException("Invalid username or password");
         }
 
-        String randomToken = generateToken();
-        while (CCUserRepository.existsCCUserByToken(randomToken)) {
-            randomToken = generateToken();
+        user.setPublicKey(publicKey);
+        CCUserRepository.save(user);
+    }
+
+    public CCUser login(String username, String password) {
+        CCUser user = CCUserRepository.findByUsername(username);
+        if (user == null || !passwordEncoder.matches(password, user.getHashedPassword())) {
+            throw new BadCredentialsException("Invalid username or password");
         }
 
-        CCUser.setToken(randomToken);
-        CCUserRepository.save(CCUser);
+        user.setToken(generateToken());
+        CCUserRepository.save(user);
 
-        return CCUser;
+        return user;
     }
 
     public boolean isNotAuthorized(String expectedUsername, String token) {
-        CCUser CCUser = CCUserRepository.findByUsername(expectedUsername);
-        if (CCUser == null || token == null) {
+        CCUser user = CCUserRepository.findByUsername(expectedUsername);
+        if (user == null || token == null) {
             return true;
         }
 
-        return !CCUser.getToken().equals(token);
+        return !user.getToken().equals(token);
     }
 
     private String generateToken() {
@@ -69,10 +75,20 @@ public class AuthenticationService {
             return "1234567890";
         }
 
-        return secureRandom
+        String token = secureRandom
                 .ints(TOKEN_LENGTH, 0, chrs.length())
                 .mapToObj(chrs::charAt)
                 .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
                 .toString();
+
+        while (CCUserRepository.existsCCUserByToken(token)) {
+            token = secureRandom
+                    .ints(TOKEN_LENGTH, 0, chrs.length())
+                    .mapToObj(chrs::charAt)
+                    .collect(StringBuilder::new, StringBuilder::append, StringBuilder::append)
+                    .toString();
+        }
+
+        return token;
     }
 }

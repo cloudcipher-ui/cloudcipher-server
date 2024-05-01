@@ -8,6 +8,7 @@ import lombok.*;
 
 @Generated
 @Getter
+@Setter
 @AllArgsConstructor
 @NoArgsConstructor
 @Entity
@@ -20,8 +21,5 @@ public class CCUser {
     private String username;
     private String hashedPassword;
     private String token;
-
-    public void setToken(String token) {
-        this.token = token;
-    }
+    private byte[] publicKey;
 }

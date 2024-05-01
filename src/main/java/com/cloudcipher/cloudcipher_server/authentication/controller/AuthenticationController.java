@@ -43,4 +43,16 @@ public class AuthenticationController {
         }
         return response;
     }
+
+    @PostMapping("/key")
+    public @ResponseBody Map<String, Object> addPublicKey(@RequestParam String username, @RequestParam String password, @RequestParam byte[] publicKey) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            authenticationService.addPublicKey(username, password, publicKey);
+            response.put("success", "Account created successfully");
+        } catch (BadCredentialsException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        return response;
+    }
 }
