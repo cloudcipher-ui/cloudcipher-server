@@ -170,7 +170,7 @@ public class FileService {
 
             byte[] newFile = responseEntity.getContent().readAllBytes();
             uploadToS3(targetUsername + "/shared/" + username + "/" + filename, newFile);
-            uploadToS3(targetUsername + "/shared/" + username + "/iv/" + filename, iv);
+            uploadToS3(targetUsername + "/iv/shared/" + username + "/" + filename, iv);
         } catch (Exception e) {
             throw new RuntimeException(e.getMessage());
         }
@@ -188,7 +188,7 @@ public class FileService {
         ListObjectsV2Response listObjectsV2Response = s3Client.listObjectsV2(listObjectsV2Request);
         for (S3Object s3Object : listObjectsV2Response.contents()) {
             String key = s3Object.key();
-            if (key.contains("/iv/")) {
+            if (key.contains("/iv/") || key.contains("/key/")) {
                 continue;
             }
             String fileName = key.substring(prefix.length());
@@ -197,17 +197,5 @@ public class FileService {
         }
 
         return files;
-    }
-
-    public void newKey(String username, String token, String targetUsername, String filename, MultipartFile newKey) throws IOException {
-        if (authenticationService.isNotAuthorized(username, token)) {
-            throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
-        }
-
-        if (!authenticationService.userExists(targetUsername)) {
-            throw new BadRequestException("Target user does not exist.");
-        }
-
-        uploadToS3(targetUsername + "/shared/" + username + "/key/" + filename + ".key", newKey.getBytes());
     }
 }

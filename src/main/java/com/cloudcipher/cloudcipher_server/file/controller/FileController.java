@@ -80,14 +80,4 @@ public class FileController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }
-
-    @PostMapping("/newkey")
-    public @ResponseBody String newKey(@RequestParam String username, @RequestParam String token, @RequestParam String targetUsername, @RequestParam String filename, @RequestParam MultipartFile newKey) {
-        try {
-            fileService.newKey(username, token, targetUsername, filename, newKey);
-            return "New key sent successfully";
-        } catch (BadCredentialsException | IOException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
-        }
-    }
 }
