@@ -6,10 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -56,17 +53,28 @@ public class FileController {
         }
     }
 
-    @PostMapping("/reencrypt")
-    public @ResponseBody String reEncrypt(
-            @RequestParam String username,
-            @RequestParam String targetUsername,
-            @RequestParam String token,
-            @RequestParam String filename,
-            @RequestParam MultipartFile rg
+    @PostMapping("/reencrypt/local")
+    public @ResponseBody Map<String, Object> reEncrypt(
+            @RequestParam MultipartFile file,
+            @RequestParam MultipartFile iv,
+            @RequestParam String rg
     ) {
         try {
-            fileService.reEncrypt(username, targetUsername, token, filename, rg);
-            return "File re-encrypted successfully";
+            return fileService.reEncryptLocal(file, iv, rg);
+        } catch (IOException | RuntimeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    @PostMapping("/reencrypt/cloud")
+    public @ResponseBody Map<String, Object> reEncrypt(
+            @RequestParam String username,
+            @RequestParam String token,
+            @RequestParam String filename,
+            @RequestParam String rg
+    ) {
+        try {
+            return fileService.reEncryptCloud(username, token, filename, rg);
         } catch (IOException | RuntimeException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
@@ -77,6 +85,15 @@ public class FileController {
         try {
             return fileService.list(username, token);
         } catch (BadCredentialsException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    @GetMapping("/receive/{shareId}")
+    public @ResponseBody Map<String, Object> receive(@PathVariable String shareId) {
+        try {
+            return fileService.getSharedFile(shareId);
+        } catch (BadRequestException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
     }

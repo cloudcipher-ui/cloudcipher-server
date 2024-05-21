@@ -109,7 +109,7 @@ public class AuthenticationService {
         return k;
     }
 
-    public boolean userExists(String username) {
-        return CCUserRepository.existsCCUserByUsername(username);
+    public CCUser getUser(String username) {
+        return CCUserRepository.findByUsername(username);
     }
 }

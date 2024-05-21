@@ -1,10 +1,14 @@
 package com.cloudcipher.cloudcipher_server.file.service;
 
+import com.cloudcipher.cloudcipher_server.authentication.model.CCUser;
 import com.cloudcipher.cloudcipher_server.authentication.service.AuthenticationService;
+import com.cloudcipher.cloudcipher_server.file.model.SharedFile;
+import com.cloudcipher.cloudcipher_server.file.repository.SharedFileRepository;
 import org.apache.coyote.BadRequestException;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.ContentType;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
@@ -15,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
 
@@ -28,6 +33,9 @@ public class FileService {
 
     @Autowired
     private AuthenticationService authenticationService;
+
+    @Autowired
+    private SharedFileRepository sharedFileRepository;
 
     @Autowired
     private S3Client s3Client;
@@ -69,12 +77,13 @@ public class FileService {
 
     private byte[] downloadFromS3(String key) throws BadRequestException {
         try {
-            ResponseBytes<GetObjectResponse> response = s3Client.getObjectAsBytes(
+            ResponseBytes<GetObjectResponse> response = s3Client.getObject(
                     GetObjectRequest
                             .builder()
                             .key(key)
                             .bucket(bucketName)
-                            .build()
+                            .build(),
+                    ResponseTransformer.toBytes()
             );
             return response.asByteArray();
         } catch (NoSuchKeyException e) {
@@ -131,27 +140,15 @@ public class FileService {
         deleteFromS3(ivKey);
     }
 
-    public void reEncrypt(String username, String targetUsername, String token, String filename, MultipartFile rg) throws IOException {
-        if (authenticationService.isNotAuthorized(username, token)) {
-            throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
-        }
-
-        if (!authenticationService.userExists(targetUsername)) {
-            throw new BadRequestException("Target user does not exist.");
-        }
-
-        String key = username + "/" + filename;
-        if (!fileExistInS3(key)) {
-            throw new BadRequestException("File not found.");
-        }
-        byte[] fileBytes = downloadFromS3(key);
-        byte[] iv = downloadFromS3(username + "/iv/" + filename);
+    public Map<String, Object> reEncryptLocal(MultipartFile file, MultipartFile iv, String rg) throws IOException {
+        byte[] fileBytes = file.getBytes();
+        byte[] ivBytes = iv.getBytes();
 
         HttpPost post = new HttpPost(proxyUrl);
         HttpEntity entity = MultipartEntityBuilder.create()
-                .addBinaryBody("file", fileBytes, org.apache.http.entity.ContentType.DEFAULT_BINARY, filename)
-                .addBinaryBody("iv", iv, org.apache.http.entity.ContentType.DEFAULT_BINARY, "iv")
-                .addBinaryBody("rg", rg.getBytes(), org.apache.http.entity.ContentType.DEFAULT_BINARY, "rg")
+                .addBinaryBody("file", fileBytes, ContentType.APPLICATION_OCTET_STREAM, file.getOriginalFilename())
+                .addBinaryBody("iv", ivBytes, ContentType.APPLICATION_OCTET_STREAM, "iv")
+                .addTextBody("rg", rg)
                 .addTextBody("key", secretKey)
                 .build();
 
@@ -168,9 +165,99 @@ public class FileService {
                 throw new RuntimeException("Internal server error. Please try again later or contact support");
             }
 
-            byte[] newFile = responseEntity.getContent().readAllBytes();
-            uploadToS3(targetUsername + "/shared/" + username + "/" + filename, newFile);
-            uploadToS3(targetUsername + "/iv/shared/" + username + "/" + filename, iv);
+            byte[] reencryptedFile = responseEntity.getContent().readAllBytes();
+
+            String randomId = java.util.UUID.randomUUID().toString();
+            while (sharedFileRepository.existsByShareId(randomId)) {
+                randomId = java.util.UUID.randomUUID().toString();
+            }
+
+            String filePath = "shared/" + randomId + "/" + file.getOriginalFilename();
+            uploadToS3(filePath, reencryptedFile);
+
+            String ivPath = "shared/" + randomId + "/iv/" + file.getOriginalFilename();
+            uploadToS3(ivPath, ivBytes);
+
+            SharedFile sharedFile = SharedFile.builder()
+                    .shareId(randomId)
+                    .filename(file.getOriginalFilename())
+                    .filePath(filePath)
+                    .ivPath(ivPath)
+                    .build();
+            sharedFileRepository.save(sharedFile);
+
+            return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", ivBytes);
+        } catch (Exception e) {
+            throw new RuntimeException(e.getMessage());
+        }
+    }
+
+    public Map<String, Object> reEncryptCloud(String username, String token, String filename, String rg) throws IOException {
+        if (authenticationService.isNotAuthorized(username, token)) {
+            throw new BadCredentialsException(BAD_CREDENTIALS_MESSAGE);
+        }
+
+        String key = username + "/" + filename;
+        if (!fileExistInS3(key)) {
+            throw new BadRequestException("File not found.");
+        }
+
+        CCUser owner = authenticationService.getUser(username);
+        if (sharedFileRepository.existsByOwnerAndFilename(owner, filename)) {
+            SharedFile sharedFile = sharedFileRepository.findByOwnerAndFilename(owner, filename);
+            deleteFromS3(sharedFile.getFilePath());
+            deleteFromS3(sharedFile.getIvPath());
+            sharedFileRepository.delete(sharedFile);
+        }
+
+
+        byte[] fileBytes = downloadFromS3(key);
+        byte[] iv = downloadFromS3(username + "/iv/" + filename);
+
+        HttpPost post = new HttpPost(proxyUrl);
+        HttpEntity entity = MultipartEntityBuilder.create()
+                .addBinaryBody("file", fileBytes, ContentType.APPLICATION_OCTET_STREAM, filename)
+                .addBinaryBody("iv", iv, ContentType.APPLICATION_OCTET_STREAM, "iv")
+                .addTextBody("rg", rg)
+                .addTextBody("key", secretKey)
+                .build();
+
+        post.setEntity(entity);
+        try (CloseableHttpClient client = HttpClients.createDefault()) {
+            HttpResponse response = client.execute(post);
+            HttpEntity responseEntity = response.getEntity();
+
+            if (response.getStatusLine().getStatusCode() != 200) {
+                throw new BadRequestException("Error re-encrypting file.");
+            }
+
+            if (responseEntity == null) {
+                throw new RuntimeException("Internal server error. Please try again later or contact support");
+            }
+
+            byte[] reencryptedFile = responseEntity.getContent().readAllBytes();
+            String randomId = java.util.UUID.randomUUID().toString();
+            while (sharedFileRepository.existsByShareId(randomId)) {
+                randomId = java.util.UUID.randomUUID().toString();
+            }
+
+            String filePath = "shared/" + randomId + "/" + filename;
+            uploadToS3(filePath, reencryptedFile);
+
+            String ivPath = "shared/" + randomId + "/iv/" + filename;
+            uploadToS3(ivPath, iv);
+
+            SharedFile sharedFile = SharedFile.builder()
+                    .shareId(randomId)
+                    .filename(filename)
+                    .filePath(filePath)
+                    .ivPath(ivPath)
+                    .owner(owner)
+                    .build();
+            sharedFileRepository.save(sharedFile);
+
+            return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", iv);
+
         } catch (Exception e) {
             throw new RuntimeException(e.getMessage());
         }
@@ -197,5 +284,18 @@ public class FileService {
         }
 
         return files;
+    }
+
+    public Map<String, Object> getSharedFile(String shareId) throws BadRequestException {
+        SharedFile sharedFile = sharedFileRepository.findByShareId(shareId);
+        if (sharedFile == null) {
+            throw new BadRequestException("File not found.");
+        }
+
+        String filename = sharedFile.getFilename();
+        byte[] fileBytes = downloadFromS3(sharedFile.getFilePath());
+        byte[] ivBytes = downloadFromS3(sharedFile.getIvPath());
+
+        return Map.of("filename", filename, "fileBytes", fileBytes, "ivBytes", ivBytes);
     }
 }
