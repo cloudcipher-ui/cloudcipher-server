@@ -21,5 +21,4 @@ public class CCUser {
     private String username;
     private String hashedPassword;
     private String token;
-    private byte[] publicKey;
 }
