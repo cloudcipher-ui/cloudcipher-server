@@ -7,12 +7,13 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
 
 @ControllerAdvice
-public class CustomControllerAdvice {
+public class CustomControllerAdvice extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<CustomErrorResponse> handleBadCredentialsException(BadCredentialsException ex, WebRequest request) {
