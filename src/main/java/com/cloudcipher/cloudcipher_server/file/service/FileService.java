@@ -4,14 +4,8 @@ import com.cloudcipher.cloudcipher_server.authentication.model.CCUser;
 import com.cloudcipher.cloudcipher_server.authentication.service.AuthenticationService;
 import com.cloudcipher.cloudcipher_server.file.model.SharedFile;
 import com.cloudcipher.cloudcipher_server.file.repository.SharedFileRepository;
+import com.cloudcipher.cloudcipher_server.utility.WebUtility;
 import org.apache.coyote.BadRequestException;
-import org.apache.http.HttpEntity;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.ContentType;
-import org.apache.http.entity.mime.MultipartEntityBuilder;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -42,12 +36,6 @@ public class FileService {
 
     @Value("${aws.bucket-name}")
     private String bucketName;
-
-    @Value("${secret-key}")
-    private String secretKey;
-
-    @Value("${proxy-url}")
-    private String proxyUrl;
 
     private final String BAD_CREDENTIALS_MESSAGE = "Invalid credentials. Please login again";
 
@@ -144,52 +132,28 @@ public class FileService {
         byte[] fileBytes = file.getBytes();
         byte[] ivBytes = iv.getBytes();
 
-        HttpPost post = new HttpPost(proxyUrl);
-        HttpEntity entity = MultipartEntityBuilder.create()
-                .addBinaryBody("file", fileBytes, ContentType.APPLICATION_OCTET_STREAM, file.getOriginalFilename())
-                .addBinaryBody("iv", ivBytes, ContentType.APPLICATION_OCTET_STREAM, "iv")
-                .addTextBody("rg", rg)
-                .addTextBody("key", secretKey)
-                .build();
+        byte[] reencryptedFile = WebUtility.initiateReEncryption(file.getOriginalFilename(), fileBytes, ivBytes, rg);
 
-        post.setEntity(entity);
-        try (CloseableHttpClient client = HttpClients.createDefault()) {
-            HttpResponse response = client.execute(post);
-            HttpEntity responseEntity = response.getEntity();
-
-            if (response.getStatusLine().getStatusCode() != 200) {
-                throw new BadRequestException("Error re-encrypting file.");
-            }
-
-            if (responseEntity == null) {
-                throw new RuntimeException("Internal server error. Please try again later or contact support");
-            }
-
-            byte[] reencryptedFile = responseEntity.getContent().readAllBytes();
-
-            String randomId = java.util.UUID.randomUUID().toString();
-            while (sharedFileRepository.existsByShareId(randomId)) {
-                randomId = java.util.UUID.randomUUID().toString();
-            }
-
-            String filePath = "shared/" + randomId + "/" + file.getOriginalFilename();
-            uploadToS3(filePath, reencryptedFile);
-
-            String ivPath = "shared/" + randomId + "/iv/" + file.getOriginalFilename();
-            uploadToS3(ivPath, ivBytes);
-
-            SharedFile sharedFile = SharedFile.builder()
-                    .shareId(randomId)
-                    .filename(file.getOriginalFilename())
-                    .filePath(filePath)
-                    .ivPath(ivPath)
-                    .build();
-            sharedFileRepository.save(sharedFile);
-
-            return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", ivBytes);
-        } catch (Exception e) {
-            throw new RuntimeException(e.getMessage());
+        String randomId = java.util.UUID.randomUUID().toString();
+        while (sharedFileRepository.existsByShareId(randomId)) {
+            randomId = java.util.UUID.randomUUID().toString();
         }
+
+        String filePath = "shared/" + randomId + "/" + file.getOriginalFilename();
+        uploadToS3(filePath, reencryptedFile);
+
+        String ivPath = "shared/" + randomId + "/iv/" + file.getOriginalFilename();
+        uploadToS3(ivPath, ivBytes);
+
+        SharedFile sharedFile = SharedFile.builder()
+                .shareId(randomId)
+                .filename(file.getOriginalFilename())
+                .filePath(filePath)
+                .ivPath(ivPath)
+                .build();
+        sharedFileRepository.save(sharedFile);
+
+        return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", ivBytes);
     }
 
     public Map<String, Object> reEncryptCloud(String username, String token, String filename, String rg) throws IOException {
@@ -210,57 +174,31 @@ public class FileService {
             sharedFileRepository.delete(sharedFile);
         }
 
-
         byte[] fileBytes = downloadFromS3(key);
         byte[] iv = downloadFromS3(username + "/iv/" + filename);
 
-        HttpPost post = new HttpPost(proxyUrl);
-        HttpEntity entity = MultipartEntityBuilder.create()
-                .addBinaryBody("file", fileBytes, ContentType.APPLICATION_OCTET_STREAM, filename)
-                .addBinaryBody("iv", iv, ContentType.APPLICATION_OCTET_STREAM, "iv")
-                .addTextBody("rg", rg)
-                .addTextBody("key", secretKey)
-                .build();
-
-        post.setEntity(entity);
-        try (CloseableHttpClient client = HttpClients.createDefault()) {
-            HttpResponse response = client.execute(post);
-            HttpEntity responseEntity = response.getEntity();
-
-            if (response.getStatusLine().getStatusCode() != 200) {
-                throw new BadRequestException("Error re-encrypting file.");
-            }
-
-            if (responseEntity == null) {
-                throw new RuntimeException("Internal server error. Please try again later or contact support");
-            }
-
-            byte[] reencryptedFile = responseEntity.getContent().readAllBytes();
-            String randomId = java.util.UUID.randomUUID().toString();
-            while (sharedFileRepository.existsByShareId(randomId)) {
-                randomId = java.util.UUID.randomUUID().toString();
-            }
-
-            String filePath = "shared/" + randomId + "/" + filename;
-            uploadToS3(filePath, reencryptedFile);
-
-            String ivPath = "shared/" + randomId + "/iv/" + filename;
-            uploadToS3(ivPath, iv);
-
-            SharedFile sharedFile = SharedFile.builder()
-                    .shareId(randomId)
-                    .filename(filename)
-                    .filePath(filePath)
-                    .ivPath(ivPath)
-                    .owner(owner)
-                    .build();
-            sharedFileRepository.save(sharedFile);
-
-            return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", iv);
-
-        } catch (Exception e) {
-            throw new RuntimeException(e.getMessage());
+        byte[] reencryptedFile = WebUtility.initiateReEncryption(filename, fileBytes, iv, rg);
+        String randomId = java.util.UUID.randomUUID().toString();
+        while (sharedFileRepository.existsByShareId(randomId)) {
+            randomId = java.util.UUID.randomUUID().toString();
         }
+
+        String filePath = "shared/" + randomId + "/" + filename;
+        uploadToS3(filePath, reencryptedFile);
+
+        String ivPath = "shared/" + randomId + "/iv/" + filename;
+        uploadToS3(ivPath, iv);
+
+        SharedFile sharedFile = SharedFile.builder()
+                .shareId(randomId)
+                .filename(filename)
+                .filePath(filePath)
+                .ivPath(ivPath)
+                .owner(owner)
+                .build();
+        sharedFileRepository.save(sharedFile);
+
+        return Map.of("shareId", randomId, "fileBytes", reencryptedFile, "ivBytes", iv);
     }
 
     public List<Map<String, String>> list(String username, String token) {
