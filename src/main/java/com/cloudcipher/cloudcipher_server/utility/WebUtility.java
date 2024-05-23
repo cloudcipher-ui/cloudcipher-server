@@ -17,7 +17,6 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.impl.conn.BasicHttpClientConnectionManager;
 import org.apache.http.ssl.SSLContexts;
-import org.springframework.beans.factory.annotation.Value;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
@@ -27,11 +26,7 @@ import java.security.NoSuchAlgorithmException;
 
 public class WebUtility {
 
-    @Value("${proxy-url}")
-    private static String proxyUrl;
 
-    @Value("${secret-key}")
-    private static String secretKey;
 
     private static CloseableHttpClient createClient() {
         try {
@@ -55,8 +50,8 @@ public class WebUtility {
         }
     }
 
-    public static byte[] initiateReEncryption(String filename, byte[] fileBytes, byte[] iv, String rg) {
-        HttpPost post = new HttpPost(proxyUrl);
+    public static byte[] initiateReEncryption(String url, String secretKey, String filename, byte[] fileBytes, byte[] iv, String rg) {
+        HttpPost post = new HttpPost(url);
         HttpEntity entity = MultipartEntityBuilder.create()
                 .addBinaryBody("file", fileBytes, ContentType.APPLICATION_OCTET_STREAM, filename)
                 .addBinaryBody("iv", iv, ContentType.APPLICATION_OCTET_STREAM, "iv")

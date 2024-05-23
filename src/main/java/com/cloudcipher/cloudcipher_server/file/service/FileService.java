@@ -37,6 +37,12 @@ public class FileService {
     @Value("${aws.bucket-name}")
     private String bucketName;
 
+    @Value("${proxy-url}")
+    private String proxyUrl;
+
+    @Value("${secret-key}")
+    private String secretKey;
+
     private final String BAD_CREDENTIALS_MESSAGE = "Invalid credentials. Please login again";
 
 
@@ -132,7 +138,7 @@ public class FileService {
         byte[] fileBytes = file.getBytes();
         byte[] ivBytes = iv.getBytes();
 
-        byte[] reencryptedFile = WebUtility.initiateReEncryption(file.getOriginalFilename(), fileBytes, ivBytes, rg);
+        byte[] reencryptedFile = WebUtility.initiateReEncryption(proxyUrl, secretKey, file.getOriginalFilename(), fileBytes, ivBytes, rg);
 
         String randomId = java.util.UUID.randomUUID().toString();
         while (sharedFileRepository.existsByShareId(randomId)) {
@@ -177,7 +183,7 @@ public class FileService {
         byte[] fileBytes = downloadFromS3(key);
         byte[] iv = downloadFromS3(username + "/iv/" + filename);
 
-        byte[] reencryptedFile = WebUtility.initiateReEncryption(filename, fileBytes, iv, rg);
+        byte[] reencryptedFile = WebUtility.initiateReEncryption(proxyUrl, secretKey, filename, fileBytes, iv, rg);
         String randomId = java.util.UUID.randomUUID().toString();
         while (sharedFileRepository.existsByShareId(randomId)) {
             randomId = java.util.UUID.randomUUID().toString();
